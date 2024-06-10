@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <allegro5/allegro5.h>
 #include <allegro5/allegro_font.h>
 #include <allegro5/allegro_image.h>
@@ -53,6 +54,9 @@ typedef struct {
         ALLEGRO_BITMAP *squidEnemy[2];
         ALLEGRO_BITMAP *bugEnemy[2];
         ALLEGRO_BITMAP *antEnemy[2];
+        ALLEGRO_BITMAP *shipShots[2];
+        ALLEGRO_BITMAP *enemyShot[1];
+        ALLEGRO_BITMAP *explosionEnemy[0];
 } Sprites;
 
 void destroy_sprites(Sprites *s)
@@ -72,37 +76,46 @@ void destroy_sprites(Sprites *s)
         free(s);
 }
 
-#define SPEED 2
+
+// EFFECTS
+
+#define FX_N 128
+typedef struct FX {
+        int x, y;
+        int frame;
+        bool exploded;
+        bool used;
+} FX;
+
+FX *init_fx()
+{
+        FX *fx = malloc(sizeof(FX) * FX_N);
+        for (int i = 0; i < FX_N; i++) {
+                fx[i].used = false;
+        }
+
+        return fx;
+}
+
+// PLAYER
+
+#define SPEED 1
 #define PLAYER_MAX_X (WIDTH - 32)
 #define PLAYER_MAX_Y (HEIGHT - 32)
 
 typedef struct {
         int x, y;
+        int shot_timer;
 } Player;
-
-void update_player(Player *player, unsigned char key[])
-{
-        if (key[ALLEGRO_KEY_LEFT])
-                player->x -= SPEED;
-        if (key[ALLEGRO_KEY_RIGHT])
-                player->x += SPEED;
-        if (player->x < 0)
-                player->x = 0;
-        if (player->y < 0)
-                player->y = 0;
-
-        if (player->x > PLAYER_MAX_X)
-                player->x = PLAYER_MAX_X;
-
-}
 
 void draw_player(ALLEGRO_BITMAP *sprite, Player *player)
 {
         al_draw_bitmap(sprite, player->x, player->y, 0);
 }
 
-#define NUM_ROWS 7
-#define NUM_COLS 7
+// ENEMIES
+
+#define NUM_ENEMIES 30
 #define ENEMY_WIDTH 32
 #define ENEMY_HEIGHT 32
 #define SPACING 10
@@ -118,103 +131,278 @@ typedef struct {
         int dx;
         int frame;
         bool alive;
+        int shot_timer;
         Enemy_type type;
 } Enemies;
 
-Enemies **init_enemies()
+Enemies *init_enemies()
 {
-        Enemies **e = malloc(sizeof(Enemies *) * NUM_ROWS);
-        e[0] = malloc(sizeof(Enemies) * NUM_ROWS * NUM_COLS);
-        for (int i = 1; i < NUM_ROWS; i++)
-                e[i] = e[0] + i * NUM_COLS;
+        Enemies *e = malloc(sizeof(Enemies) * NUM_ENEMIES);
+        for (int i = 0; i < NUM_ENEMIES; i++) {
+                int row = i / 10;
+                int col = i % 10;
+                e[i].x = col *  (ENEMY_WIDTH + SPACING);
+                e[i].y = row *  (ENEMY_HEIGHT + SPACING) + 40;
+                e[i].frame = 0;
+                e[i].shot_timer = rand() % 1000 + 200;
+                e[i].dx = SPEED;
+                e[i].alive = true;
 
-        for (int i = 0; i < NUM_ROWS; i++) {
-                for (int j = 0; j < NUM_COLS; j++) {
-                        e[i][j].x = i * (ENEMY_WIDTH + SPACING);
-                        e[i][j].y = j * (ENEMY_HEIGHT + SPACING) + SPACING;
-                        e[i][j].frame = 0;
-                        e[i][j].dx = SPEED;
-                        e[i][j].alive = true;
-
-                        if (i % 3 == 0) 
-                                e[j][i].type = SQUID;
-                        else if (i % 3 == 1)
-                                e[j][i].type = BUG;
-                        else if (i % 3 == 2)
-                                e[j][i].type = ANT;
-                }
+                if (row % 3 == 0) 
+                        e[i].type = SQUID;
+                else if (row % 3 == 1)
+                        e[i].type = BUG;
+                else if (row % 3 == 2)
+                        e[i].type = ANT;
         }
 
         return e;
 }
 
-void update_enemies(Enemies **e)
+void draw_enemies(Sprites *s, Enemies *e)
+{
+        for (int i = 0; i < NUM_ENEMIES; i++) {
+                if (e[i].alive) {
+                        int frame_display = (e[i].frame / 30) % 2;
+                        switch (e[i].type) {
+                                case SQUID:
+                                        al_draw_bitmap(s->squidEnemy[frame_display], e[i].x, e[i].y, 0);
+                                        break;
+                                case BUG:
+                                        al_draw_bitmap(s->bugEnemy[frame_display], e[i].x, e[i].y, 0);
+                                        break;
+                                case ANT:
+                                        al_draw_bitmap(s->antEnemy[frame_display], e[i].x, e[i].y, 0);
+                                        break;
+                        }
+                }
+        }        
+}
+void destroy_enemies(Enemies *e)
+{
+        free(e);
+}
+
+// AUDIO
+
+typedef struct {
+        ALLEGRO_SAMPLE *sample_shot;
+        ALLEGRO_SAMPLE *sample_explode;
+} Audio;
+
+void audio_init(Audio *audio)
+{
+        al_install_audio();
+        al_init_acodec_addon();
+        al_reserve_samples(64);
+
+        audio->sample_shot = al_load_sample("audio_shot.flac");
+        audio->sample_explode = al_load_sample("audio_explode1.flac");
+
+}
+
+
+
+void fx_add(FX *fx, bool explode, int x, int y, Audio *audio)
+{
+        if (explode)
+                al_play_sample(audio->sample_explode, 0.75, 0, 1, ALLEGRO_PLAYMODE_ONCE, NULL);
+
+        for (int i = 0; i < FX_N; i++) {
+                if (fx[i].used)
+                        continue;
+                
+                fx[i].x = x;
+                fx[i].y = y;
+                fx[i].frame = 0;
+                fx[i].exploded = explode;
+                fx[i].used = true;
+                return;
+        }
+}
+
+void update_fx(FX *fx)
+{
+        for (int i = 0; i < FX_N; i++) {
+                if (!fx[i].used)
+                        continue;
+
+                fx[i].frame++;
+
+                if (fx[i].exploded)
+                        fx[i].used = false; 
+        }
+}
+
+void draw_fx(Sprites *s, FX *fx)
+{
+        for (int i = 0; i < FX_N; i++) {
+                if (!fx[i].used)
+                        continue;
+
+                int frame_display = (fx[i].frame / 2) % 1 ;
+                if (fx[i].exploded)
+                        al_draw_bitmap(s->)
+        }
+}
+
+void destroy_audio(Audio *audio)
+{
+        al_destroy_sample(audio->sample_shot);
+        al_destroy_sample(audio->sample_explode);
+        free(audio);
+        audio = NULL;
+}
+
+// SHOTS
+
+typedef struct {
+        int x, y, dy;
+        int frame;
+        bool ship;
+        bool used;
+} Shots;
+
+#define SHOTS_N 256
+#define SHOTS_H 32
+
+void shots_init(Shots *shots)
+{
+        for (int i = 0; i < SHOTS_N; i++) {
+                shots[i].used = false;
+        }
+}
+
+void shoot(bool ship, int x, int y, Shots *shots)
+{
+        for (int i = 0; i < SHOTS_N; i++) {
+                if (shots[i].used) 
+                        continue;
+
+                shots[i].x = x;
+                shots[i].y = y;
+
+                if (ship) {
+                        shots[i].dy = 5;
+                        shots[i].ship = true;
+                } else {
+                        shots[i].dy = 1;
+                        shots[i].ship = false;
+                }
+
+                shots[i].used = true;
+                shots[i].frame = 0;
+                break;
+
+        }
+}
+
+void update_shots(Shots *shots)
+{
+        for (int i = 0; i < SHOTS_N; i++) {
+                if (!shots[i].used)
+                        continue;
+
+                if (shots[i].ship) {
+                        shots[i].y -= shots[i].dy;
+                        if (shots[i].y < -SHOTS_H) {
+                                shots[i].used = false;
+                                continue;
+                        }
+                } else {
+                        shots[i].y += shots[i].dy;
+                        if (shots[i].y > HEIGHT) {
+                                shots[i].used = false;
+                                continue;
+                        }
+                }
+                shots[i].frame++;
+        }
+}
+
+
+#define PLAYER_SPEED 5
+void update_player(Player *player, unsigned char key[], Shots *shots)
+{
+        if (key[ALLEGRO_KEY_LEFT])
+                player->x -= PLAYER_SPEED;
+        if (key[ALLEGRO_KEY_RIGHT])
+                player->x += PLAYER_SPEED;
+        if (player->x < 0)
+                player->x = 0;
+        if (player->y < 0)
+                player->y = 0;
+
+        if (player->x > PLAYER_MAX_X)
+                player->x = PLAYER_MAX_X;
+
+        if (player->shot_timer)
+                player->shot_timer--;
+        else if (key[ALLEGRO_KEY_SPACE]) {
+                if (player->shot_timer == 0)
+                        shoot(true, player->x, player->y, shots);
+                player->shot_timer = 10; 
+        }
+}
+
+void update_enemies(Enemies *e, Shots *shots)
 {
         bool hittedEdge = false;
 
-        for (int i = 0; i < NUM_ROWS; i++) {
-                for (int j = 0; j < NUM_COLS; j++) {
-                        if ( e[i][j].alive ) {
-                                if (e[i][j].x < 0 || e[i][j].x + ENEMY_WIDTH > WIDTH) {
-                                        hittedEdge = true;
-                                        break;
-                                }
+        for (int i = 0; i < NUM_ENEMIES; i++) {
+                if (e[i].alive) {
+                        if (e[i].x < 0 || e[i].x + ENEMY_WIDTH > WIDTH) {
+                                hittedEdge = true;
+                                break;
                         }
                 }
-
-                if (hittedEdge)
-                        break;
         }
 
         if (hittedEdge) {
-                for (int i = 0; i < NUM_ROWS; i++) {
-                        for (int j = 0; j < NUM_COLS; j++) {
-                                e[i][j].dx = -e[i][j].dx;
-                        }
+                for (int i = 0; i < NUM_ENEMIES; i++) {
+                        e[i].dx = -e[i].dx;
                 }
         }
 
 
-        for (int i = 0; i < NUM_ROWS; i++) {
-                for (int j = 0; j < NUM_COLS; j++) {
-                        if ( e[i][j].alive ) {
-                                e[i][j].x += e[i][j].dx;                       
-                                e[i][j].frame++;
-                        }
-                }
-        }
-}
+        for (int i = 0; i < NUM_ENEMIES; i++) {
+                if ( e[i].alive ) {
+                        e[i].x += e[i].dx;                       
+                        e[i].frame++;
 
-void draw_enemies(Sprites *s, Enemies **e)
-{
-        for (int i = 0; i < NUM_ROWS; i++) {
-                for (int j = 0; j < NUM_COLS; j++) {
-                        if (e[i][j].alive) {
-                                int frame_display = (e[i][j].frame / 30) % 2;
-                                switch (e[i][j].type) {
-                                        case SQUID:
-                                                al_draw_bitmap(s->squidEnemy[frame_display], e[i][j].x, e[i][j].y, 0);
-                                                break;
-                                        case BUG:
-                                                al_draw_bitmap(s->bugEnemy[frame_display], e[i][j].x, e[i][j].y, 0);
-                                                break;
-                                        case ANT:
-                                                al_draw_bitmap(s->antEnemy[frame_display], e[i][j].x, e[i][j].y, 0);
-                                                break;
+                        if (e[i].shot_timer > 0)
+                                e[i].shot_timer--;
+
+                        if (e[i].shot_timer == 0) {
+                                if (e[i].shot_timer == 0) {
+                                        int shot_x = e[i].x;
+                                        int shot_y = e[i].y;
+                                        shoot(false, shot_x, shot_y, shots);
+                                        e[i].shot_timer = rand() % 10000 + 200;
                                 }
                         }
                 }
         }
 }
 
-void destroy_enemies(Enemies **e)
+void draw_shots(Sprites *s, Shots *shots)
 {
-        free(e[0]);
-        free(e);
+        for (int i = 0; i < SHOTS_N; i++) {
+                if (!shots[i].used)
+                        continue;
+
+                int frame_display = (shots[i].frame / 2) % 2;
+                if (shots[i].ship) {
+                        al_draw_bitmap(s->shipShots[frame_display], shots[i].x, shots[i].y, 0);
+                } else {
+                        al_draw_bitmap(s->enemyShot[0], shots[i].x, shots[i].y, 0);
+                }
+        }
 }
 
 int main()
 {
+        srand(time(0));
         must_init(al_init(), "allegro");
         must_init(al_install_keyboard(), "keyboard");
 
@@ -231,6 +419,10 @@ int main()
         must_init(font, "font");
 
         must_init(al_init_image_addon(), "image addon");
+
+        // AUDIO INIT
+        Audio *audio = malloc(sizeof(Audio));
+        audio_init(audio);
 
         // SPRITES 
         Sprites *sprites = malloc(sizeof(Sprites));
@@ -249,13 +441,24 @@ int main()
         sprites->antEnemy[0] = al_create_sub_bitmap(sprites->_sheet, 4 * 32, 0, 32, 32);
         sprites->antEnemy[1] = al_create_sub_bitmap(sprites->_sheet, 5 * 32, 0, 32, 32);
 
+        spirtes->explosionEnemy[0] = al_create_sub_bitmap(sprites->_sheet, 4 * 32, 32, 32, 32);
+
+        // SHOTS SPRITES
+        sprites->shipShots[0] = al_create_sub_bitmap(sprites->_sheet, 2 * 32, 32, 32, 32);
+        sprites->shipShots[1] = al_create_sub_bitmap(sprites->_sheet, 3 * 32, 32, 32, 32);
+        sprites->enemyShot[0] = al_create_sub_bitmap(sprites->_sheet, 1 * 32, 32, 32, 32);
+
         // INIT PLAYER
         Player *player = malloc(sizeof(Player));
         player->x = 100;
         player->y = HEIGHT - 2 * 32;
 
         // INIT ENEMIES
-        Enemies **enemies = init_enemies();
+        Enemies *enemies = init_enemies();
+
+        // INIT SHOTS
+        Shots *shots = malloc(sizeof(Shots) * SHOTS_N);
+        shots_init(shots);
 
         al_register_event_source(queue, al_get_keyboard_event_source());
         al_register_event_source(queue, al_get_display_event_source(disp));
@@ -278,8 +481,9 @@ int main()
                 {
                         case ALLEGRO_EVENT_TIMER:
                                 // game logic goes here.
-                                update_enemies(enemies);
-                                update_player(player, key);
+                                update_enemies(enemies, shots);
+                                update_player(player, key, shots);
+                                update_shots(shots);
                                 redraw = true;
                                 if (key[ALLEGRO_KEY_ESCAPE])
                                         done = true;
@@ -299,6 +503,7 @@ int main()
                 {
                         al_clear_to_color(al_map_rgb(0, 0, 0));
 
+                        draw_shots(sprites, shots);
                         draw_enemies(sprites, enemies);
                         draw_player(sprites->spaceShip, player);
 
@@ -308,6 +513,8 @@ int main()
                 }
         }
 
+        free(shots);
+        destroy_audio(audio);
         destroy_enemies(enemies);
         destroy_sprites(sprites);
         al_destroy_font(font);
