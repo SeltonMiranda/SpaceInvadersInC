@@ -101,8 +101,8 @@ void draw_player(ALLEGRO_BITMAP *sprite, Player *player)
         al_draw_bitmap(sprite, player->x, player->y, 0);
 }
 
-#define NUM_ROWS 3
-#define NUM_COLS 3
+#define NUM_ROWS 7
+#define NUM_COLS 7
 #define ENEMY_WIDTH 32
 #define ENEMY_HEIGHT 32
 #define SPACING 10
@@ -116,6 +116,7 @@ typedef enum enemy_type {
 typedef struct {
         int x, y;
         int dx;
+        int frame;
         bool alive;
         Enemy_type type;
 } Enemies;
@@ -131,15 +132,16 @@ Enemies **init_enemies()
                 for (int j = 0; j < NUM_COLS; j++) {
                         e[i][j].x = i * (ENEMY_WIDTH + SPACING);
                         e[i][j].y = j * (ENEMY_HEIGHT + SPACING) + SPACING;
-                        e[i][j].alive = true;
+                        e[i][j].frame = 0;
                         e[i][j].dx = SPEED;
+                        e[i][j].alive = true;
 
-                        if (i == 0) 
-                                e[i][j].type = SQUID;
-                        else if (i == 1)
-                                e[i][j].type = BUG;
-                        else if (i == 2)
-                                e[i][j].type = ANT;
+                        if (i % 3 == 0) 
+                                e[j][i].type = SQUID;
+                        else if (i % 3 == 1)
+                                e[j][i].type = BUG;
+                        else if (i % 3 == 2)
+                                e[j][i].type = ANT;
                 }
         }
 
@@ -177,6 +179,7 @@ void update_enemies(Enemies **e)
                 for (int j = 0; j < NUM_COLS; j++) {
                         if ( e[i][j].alive ) {
                                 e[i][j].x += e[i][j].dx;                       
+                                e[i][j].frame++;
                         }
                 }
         }
@@ -187,15 +190,16 @@ void draw_enemies(Sprites *s, Enemies **e)
         for (int i = 0; i < NUM_ROWS; i++) {
                 for (int j = 0; j < NUM_COLS; j++) {
                         if (e[i][j].alive) {
+                                int frame_display = (e[i][j].frame / 30) % 2;
                                 switch (e[i][j].type) {
                                         case SQUID:
-                                                al_draw_bitmap(s->squidEnemy[0], e[i][j].x, e[i][j].y, 0);
+                                                al_draw_bitmap(s->squidEnemy[frame_display], e[i][j].x, e[i][j].y, 0);
                                                 break;
                                         case BUG:
-                                                al_draw_bitmap(s->bugEnemy[0], e[i][j].x, e[i][j].y, 0);
+                                                al_draw_bitmap(s->bugEnemy[frame_display], e[i][j].x, e[i][j].y, 0);
                                                 break;
                                         case ANT:
-                                                al_draw_bitmap(s->antEnemy[0], e[i][j].x, e[i][j].y, 0);
+                                                al_draw_bitmap(s->antEnemy[frame_display], e[i][j].x, e[i][j].y, 0);
                                                 break;
                                 }
                         }
