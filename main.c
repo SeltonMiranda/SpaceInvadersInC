@@ -16,6 +16,16 @@ void must_init(bool test, const char *description)
         exit(1);
 }
 
+bool collide(int ax1, int ay1, int ax2, int ay2, int bx1, int by1, int bx2, int by2)
+{
+        if (ax1 > bx2) return false;
+        if (ax2 < bx1) return false;
+        if (ay1 > by2) return false;
+        if (ay2 < by1) return false;
+
+        return true;
+}
+
 #define HEIGHT 480
 #define WIDTH 720
 
@@ -50,13 +60,14 @@ void keyboard_update(ALLEGRO_EVENT *e, unsigned char key[])
 #define TOTAL_ENEMIES 6
 typedef struct {
         ALLEGRO_BITMAP *_sheet;
+
         ALLEGRO_BITMAP *spaceShip;
         ALLEGRO_BITMAP *squidEnemy[2];
         ALLEGRO_BITMAP *bugEnemy[2];
         ALLEGRO_BITMAP *antEnemy[2];
         ALLEGRO_BITMAP *shipShots[2];
         ALLEGRO_BITMAP *enemyShot[1];
-        ALLEGRO_BITMAP *explosionEnemy[0];
+        ALLEGRO_BITMAP *explosionEnemy[1];
 } Sprites;
 
 void destroy_sprites(Sprites *s)
@@ -72,10 +83,15 @@ void destroy_sprites(Sprites *s)
         al_destroy_bitmap(s->antEnemy[0]);
         al_destroy_bitmap(s->antEnemy[1]);
 
+        al_destroy_bitmap(s->shipShots[0]);
+        al_destroy_bitmap(s->shipShots[1]);
+        al_destroy_bitmap(s->enemyShot[0]);
+
+        al_destroy_bitmap(s->explosionEnemy[0]);
+
         al_destroy_bitmap(s->_sheet);
         free(s);
 }
-
 
 // EFFECTS
 
@@ -201,12 +217,10 @@ void audio_init(Audio *audio)
 
 }
 
-
-
 void fx_add(FX *fx, bool explode, int x, int y, Audio *audio)
 {
         if (explode)
-                al_play_sample(audio->sample_explode, 0.75, 0, 1, ALLEGRO_PLAYMODE_ONCE, NULL);
+                al_play_sample(audio->sample_explode, 1.0, 0.0, 1.0, ALLEGRO_PLAYMODE_ONCE, NULL);
 
         for (int i = 0; i < FX_N; i++) {
                 if (fx[i].used)
@@ -215,7 +229,7 @@ void fx_add(FX *fx, bool explode, int x, int y, Audio *audio)
                 fx[i].x = x;
                 fx[i].y = y;
                 fx[i].frame = 0;
-                fx[i].exploded = explode;
+                fx[i].exploded = !explode;
                 fx[i].used = true;
                 return;
         }
@@ -242,7 +256,7 @@ void draw_fx(Sprites *s, FX *fx)
 
                 int frame_display = (fx[i].frame / 2) % 1 ;
                 if (fx[i].exploded)
-                        al_draw_bitmap(s->)
+                        al_draw_bitmap(s->explosionEnemy[frame_display], fx[i].x, fx[i].y, 0);
         }
 }
 
@@ -263,14 +277,36 @@ typedef struct {
         bool used;
 } Shots;
 
-#define SHOTS_N 256
 #define SHOTS_H 32
+#define SHOTS_N 256
 
 void shots_init(Shots *shots)
 {
         for (int i = 0; i < SHOTS_N; i++) {
                 shots[i].used = false;
         }
+}
+
+bool shots_collide(bool ship, int x, int y, int w, int h, Shots *shots, FX *fx, Audio *audio)
+{
+        for (int i = 0; i < SHOTS_N; i++) {
+                if (!shots[i].used)
+                        continue;
+
+                if (shots[i].ship == ship)
+                        continue;
+                
+                int width = 32;
+
+                if (collide(x, y, x + w, y + h, shots[i].x, shots[i].y, shots[i].x+width, shots[i].y+width)) {
+                        al_play_sample(audio->sample_shot, 1.0, 0.0, 1.0, ALLEGRO_PLAYMODE_ONCE, NULL);
+                        fx_add(fx, true, shots[i].x, shots[i].y, audio);
+                        shots[i].used = false;
+                        return true;
+                }
+        }
+
+        return false;
 }
 
 void shoot(bool ship, int x, int y, Shots *shots)
@@ -322,7 +358,7 @@ void update_shots(Shots *shots)
 
 
 #define PLAYER_SPEED 5
-void update_player(Player *player, unsigned char key[], Shots *shots)
+void update_player(Player *player, unsigned char key[], Shots *shots, FX *fx, Audio *audio)
 {
         if (key[ALLEGRO_KEY_LEFT])
                 player->x -= PLAYER_SPEED;
@@ -342,6 +378,12 @@ void update_player(Player *player, unsigned char key[], Shots *shots)
                 if (player->shot_timer == 0)
                         shoot(true, player->x, player->y, shots);
                 player->shot_timer = 10; 
+        }
+
+        int x= player->x;
+        int y = player->y + 20;
+        if (shots_collide(true, x, y, 32, 32, shots, fx, audio)) {
+                printf("collided\n");
         }
 }
 
@@ -441,7 +483,7 @@ int main()
         sprites->antEnemy[0] = al_create_sub_bitmap(sprites->_sheet, 4 * 32, 0, 32, 32);
         sprites->antEnemy[1] = al_create_sub_bitmap(sprites->_sheet, 5 * 32, 0, 32, 32);
 
-        spirtes->explosionEnemy[0] = al_create_sub_bitmap(sprites->_sheet, 4 * 32, 32, 32, 32);
+        sprites->explosionEnemy[0] = al_create_sub_bitmap(sprites->_sheet, 4 * 32, 32, 32, 32);
 
         // SHOTS SPRITES
         sprites->shipShots[0] = al_create_sub_bitmap(sprites->_sheet, 2 * 32, 32, 32, 32);
@@ -459,6 +501,9 @@ int main()
         // INIT SHOTS
         Shots *shots = malloc(sizeof(Shots) * SHOTS_N);
         shots_init(shots);
+
+        // INIT EFFECTS
+        FX *fx = init_fx(); 
 
         al_register_event_source(queue, al_get_keyboard_event_source());
         al_register_event_source(queue, al_get_display_event_source(disp));
@@ -482,7 +527,7 @@ int main()
                         case ALLEGRO_EVENT_TIMER:
                                 // game logic goes here.
                                 update_enemies(enemies, shots);
-                                update_player(player, key, shots);
+                                update_player(player, key, shots, fx, audio);
                                 update_shots(shots);
                                 redraw = true;
                                 if (key[ALLEGRO_KEY_ESCAPE])
@@ -517,10 +562,10 @@ int main()
         destroy_audio(audio);
         destroy_enemies(enemies);
         destroy_sprites(sprites);
+        free(fx);
         al_destroy_font(font);
         al_destroy_display(disp);
         al_destroy_timer(timer);
         al_destroy_event_queue(queue);
-
         return 0;
 }
