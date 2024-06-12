@@ -99,6 +99,7 @@ void destroy_sprites(Sprites *s)
 typedef struct FX {
         int x, y;
         int frame;
+        bool ship;
         bool exploded;
         bool used;
 } FX;
@@ -108,6 +109,8 @@ FX *init_fx()
         FX *fx = malloc(sizeof(FX) * FX_N);
         for (int i = 0; i < FX_N; i++) {
                 fx[i].used = false;
+                fx[i].exploded = false;
+                fx[i].ship = false;
         }
 
         return fx;
@@ -121,6 +124,7 @@ FX *init_fx()
 
 typedef struct {
         int x, y;
+        int lives;
         int shot_timer;
 } Player;
 
@@ -131,7 +135,7 @@ void draw_player(ALLEGRO_BITMAP *sprite, Player *player)
 
 // ENEMIES
 
-#define NUM_ENEMIES 30
+#define NUM_ENEMIES 40
 #define ENEMY_WIDTH 32
 #define ENEMY_HEIGHT 32
 #define SPACING 10
@@ -217,7 +221,7 @@ void audio_init(Audio *audio)
 
 }
 
-void fx_add(FX *fx, bool explode, int x, int y, Audio *audio)
+void fx_add(FX *fx, bool explode, bool ship, int x, int y, Audio *audio)
 {
         if (explode)
                 al_play_sample(audio->sample_explode, 1.0, 0.0, 1.0, ALLEGRO_PLAYMODE_ONCE, NULL);
@@ -229,8 +233,12 @@ void fx_add(FX *fx, bool explode, int x, int y, Audio *audio)
                 fx[i].x = x;
                 fx[i].y = y;
                 fx[i].frame = 0;
-                fx[i].exploded = !explode;
                 fx[i].used = true;
+                fx[i].exploded = explode;
+
+                if (ship)
+                        fx[i].ship = true;
+
                 return;
         }
 }
@@ -241,10 +249,14 @@ void update_fx(FX *fx)
                 if (!fx[i].used)
                         continue;
 
+                if (fx[i].exploded) {
+                        fx[i].used = false; 
+                        fx[i].exploded = false;
+                        return;
+                }
+
                 fx[i].frame++;
 
-                if (fx[i].exploded)
-                        fx[i].used = false; 
         }
 }
 
@@ -254,9 +266,12 @@ void draw_fx(Sprites *s, FX *fx)
                 if (!fx[i].used)
                         continue;
 
-                int frame_display = (fx[i].frame / 2) % 1 ;
-                if (fx[i].exploded)
+                int frame_display = (fx[i].frame / 3) % 1 ;
+                if (fx[i].exploded && !fx[i].ship) {
                         al_draw_bitmap(s->explosionEnemy[frame_display], fx[i].x, fx[i].y, 0);
+                        fx[i].exploded = false;
+                        fx[i].used = false;
+                }
         }
 }
 
@@ -296,11 +311,10 @@ bool shots_collide(bool ship, int x, int y, int w, int h, Shots *shots, FX *fx, 
                 if (shots[i].ship == ship)
                         continue;
                 
-                int width = 32;
+                int width = 16;
 
                 if (collide(x, y, x + w, y + h, shots[i].x, shots[i].y, shots[i].x+width, shots[i].y+width)) {
-                        al_play_sample(audio->sample_shot, 1.0, 0.0, 1.0, ALLEGRO_PLAYMODE_ONCE, NULL);
-                        fx_add(fx, true, shots[i].x, shots[i].y, audio);
+                        fx_add(fx, true, ship, x, y, audio); // problema aqui
                         shots[i].used = false;
                         return true;
                 }
@@ -322,7 +336,7 @@ void shoot(bool ship, int x, int y, Shots *shots)
                         shots[i].dy = 5;
                         shots[i].ship = true;
                 } else {
-                        shots[i].dy = 1;
+                        shots[i].dy = 2;
                         shots[i].ship = false;
                 }
 
@@ -372,22 +386,22 @@ void update_player(Player *player, unsigned char key[], Shots *shots, FX *fx, Au
         if (player->x > PLAYER_MAX_X)
                 player->x = PLAYER_MAX_X;
 
-        if (player->shot_timer)
+        if (player->shot_timer > 0)
                 player->shot_timer--;
         else if (key[ALLEGRO_KEY_SPACE]) {
-                if (player->shot_timer == 0)
-                        shoot(true, player->x, player->y, shots);
+                shoot(true, player->x, player->y, shots);
+                al_play_sample(audio->sample_shot, 1.0, 0.0, 1.0, ALLEGRO_PLAYMODE_ONCE, NULL);
                 player->shot_timer = 10; 
         }
 
         int x= player->x;
         int y = player->y + 20;
-        if (shots_collide(true, x, y, 32, 32, shots, fx, audio)) {
-                printf("collided\n");
+        if (shots_collide(true, x, y, 16, 16, shots, fx, audio)) {
+                player->lives--;
         }
 }
 
-void update_enemies(Enemies *e, Shots *shots)
+void update_enemies(Enemies *e, Shots *shots, FX *fx, Audio *audio)
 {
         bool hittedEdge = false;
 
@@ -411,6 +425,13 @@ void update_enemies(Enemies *e, Shots *shots)
                 if ( e[i].alive ) {
                         e[i].x += e[i].dx;                       
                         e[i].frame++;
+                        
+                        int x = e[i].x;
+                        int y = e[i].y + 20;
+                        if (shots_collide(false, x, y, 32, 16, shots, fx, audio)){
+                                fx_add(fx, true, false, x, y, audio);
+                                e[i].alive = false;
+                        }
 
                         if (e[i].shot_timer > 0)
                                 e[i].shot_timer--;
@@ -423,6 +444,7 @@ void update_enemies(Enemies *e, Shots *shots)
                                         e[i].shot_timer = rand() % 10000 + 200;
                                 }
                         }
+                        
                 }
         }
 }
@@ -494,6 +516,8 @@ int main()
         Player *player = malloc(sizeof(Player));
         player->x = 100;
         player->y = HEIGHT - 2 * 32;
+        player->lives = 1;
+        player->shot_timer = 10;
 
         // INIT ENEMIES
         Enemies *enemies = init_enemies();
@@ -525,13 +549,15 @@ int main()
                 switch(event.type)
                 {
                         case ALLEGRO_EVENT_TIMER:
-                                // game logic goes here.
-                                update_enemies(enemies, shots);
+                                update_enemies(enemies, shots, fx, audio);
                                 update_player(player, key, shots, fx, audio);
                                 update_shots(shots);
                                 redraw = true;
                                 if (key[ALLEGRO_KEY_ESCAPE])
                                         done = true;
+                                if (player->lives == 0) {
+                                        done = true;
+                                }
                                 break;
 
                         case ALLEGRO_EVENT_DISPLAY_CLOSE:
@@ -548,6 +574,7 @@ int main()
                 {
                         al_clear_to_color(al_map_rgb(0, 0, 0));
 
+                        draw_fx(sprites, fx);
                         draw_shots(sprites, shots);
                         draw_enemies(sprites, enemies);
                         draw_player(sprites->spaceShip, player);
