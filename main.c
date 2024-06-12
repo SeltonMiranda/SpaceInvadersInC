@@ -314,7 +314,7 @@ bool shots_collide(bool ship, int x, int y, int w, int h, Shots *shots, FX *fx, 
                 int width = 16;
 
                 if (collide(x, y, x + w, y + h, shots[i].x, shots[i].y, shots[i].x+width, shots[i].y+width)) {
-                        fx_add(fx, true, ship, x, y, audio); // problema aqui
+                        fx_add(fx, true, ship, x, y, audio);
                         shots[i].used = false;
                         return true;
                 }
@@ -427,7 +427,7 @@ void update_enemies(Enemies *e, Shots *shots, FX *fx, Audio *audio)
                         e[i].frame++;
                         
                         int x = e[i].x;
-                        int y = e[i].y + 20;
+                        int y = e[i].y;
                         if (shots_collide(false, x, y, 32, 16, shots, fx, audio)){
                                 fx_add(fx, true, false, x, y, audio);
                                 e[i].alive = false;
@@ -585,11 +585,11 @@ int main()
                 }
         }
 
+        free(fx);
         free(shots);
         destroy_audio(audio);
         destroy_enemies(enemies);
         destroy_sprites(sprites);
-        free(fx);
         al_destroy_font(font);
         al_destroy_display(disp);
         al_destroy_timer(timer);
